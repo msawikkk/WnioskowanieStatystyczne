@@ -1,0 +1,650 @@
+---
+title: "Projekt - Wnioskowanie statystyczne II"
+author: "Marta Sawikowska"
+date: "2025-01-26"
+output:
+  word_document: default
+  html_document: default
+---
+
+# Wstęp
+
+Piwo jest jednym z najpopularniejszych napojów na świecie, cieszącym się uznaniem w wielu kulturach i sytuacjach, od towarzyskich spotkań po duże uroczystości. Jego dostępność i różnorodność sprawiają, że jest wybierane przez miliony osób na całym świecie, w tym przez młode osoby dorosłe. Celem niniejszego projektu jest analiza danych z platformy Kaggle (dostępnych pod linkiem [Beer Consumption - Dataset](https://www.kaggle.com/datasets/dongeorge/beer-consumption-sao-paulo/data)), dotyczących spożycia piwa wśród grupy studentów w wieku 18-28 lat, w 2015 roku w São Paulo, Brazylia.
+
+Projekt ma na celu identyfikację czynników wpływających na nawyki konsumpcyjne piwa w tej grupie wiekowej.
+
+W szczególności, chcemy zbadać:
+
+-   "Czy istnieje zależność między temperaturą a spożyciem piwa?"
+
+-   "Czy spożycie piwa różni się istotnie między dniami powszednimi a weekendami?"
+
+-   "Czy pora roku wpływa na ilość spożywanego piwa?"
+
+-   "Czy istnieje zależność pomiędzy opadami a spożyciem piwa?"
+
+## **Opis zmiennych**
+
+Dane w tym projekcie składają się z 7 atrybutów, w tym:
+
+| Zmienna     | Opis                             |
+|-------------|----------------------------------|
+| Data        | Data                             |
+| t_med       | Mediana temperatury.             |
+| t_min       | Temperatura minimialna.          |
+| t_max       | Temperatura maksymalna.          |
+| prec        | Opady atmosferyczne              |
+| weekend     | Czy jest weekend? 1- Tak, 0- Nie |
+| consumption | Ilość skonsumowanego piwa.       |
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(GGally)
+library(ggplot2)
+library(measurements)
+library(multcomp)
+library(dplyr)
+library(corrplot)
+library(gridExtra)
+library(reshape2)
+library(lubridate)
+```
+
+```{r include=FALSE}
+#dane <- read.csv("C:/Users/graba/Desktop/Marta/WN II/Consumo_cerveja.csv")
+#dane <- read.csv("C:/Users/Admin/OneDrive/Pulpit/STUDIA/SEMESTR 5/Wnioskowanie statystyczne II/Consumo_cerveja.csv")
+dane <- read.csv("~/Downloads/Consumo_cerveja.csv")
+names(dane)<- c("Data", "t_med", "t_min",
+                "t_max", "prec", "weekend", "consumption")
+```
+
+W naszym zbiorze danych występuje wiele wierszy z brakującymi wartościami (NA), dlatego na początku przeprowadzamy ich usunięcie za pomocą funkcji `na.omit`.
+
+Ponieważ w kolumnach **t_med**, **t_min**, **t_max**, oraz **prec** liczby były zapisane z przecinkami jako separatorami dziesiętnymi, dokonujemy ich konwersji na format numeryczny. W tym celu zamieniamy przecinki na kropki, a następnie przekształcamy wartości na typ numeryczny.
+
+Następnie przeprowadzamy obróbkę kolumny zawierającej daty (`Data`), przekształcając ją na format daty za pomocą funkcji `ymd` . Wprowadzamy także dodatkowe zmienne czasowe:
+
+-   **month**: numer miesiąca (od 1 do 12),
+
+-   **day**: dzień miesiąca,
+
+-   **wday**: dzień tygodnia (numerowany od poniedziałku).
+
+Dodajemy również zmienną **season** (pora roku), która przypisuje miesiące do odpowiednich pór roku (oczywiście w Brazylii):
+
+-   "Lato" dla grudnia, stycznia, lutego,
+
+-   "Jesień" dla marca, kwietnia, maja,
+
+-   "Zima" dla czerwca, lipca, sierpnia,
+
+-   "Wiosna" dla września, października, listopada.
+
+------------------------------------------------------------------------
+
+```{r}
+dane <- na.omit(dane)
+
+dane <- dane %>%
+  mutate(
+    Data = ymd(Data),
+    month = month(Data),
+    day = day(Data),
+    wday = wday(Data, week_start = 1)
+  )
+
+dane$season <- case_when(
+  dane$month %in% c(12,1,2) ~ "Lato",
+  dane$month %in% c(3,4,5) ~ "Jesień",
+  dane$month %in% c(6,7,8) ~ "Zima",
+  dane$month %in% c(9,10,11) ~ "Wiosna"
+)
+
+# Konwersja danych na format liczbowy
+dane$t_med <- as.numeric(gsub(",", ".", dane$t_med))
+dane$t_min <- as.numeric(gsub(",", ".", dane$t_min))
+dane$t_max <- as.numeric(gsub(",", ".", dane$t_max))
+dane$prec <- as.numeric(gsub(",", ".", dane$prec))
+
+```
+
+------------------------------------------------------------------------
+
+## Macierz korelacji
+
+Tworzymy macierz korelacji aby zidentyfikować zależności oraz wybrać kluczowe cechy.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', warning=FALSE, fig.height=6, dpi=300}
+
+# Obliczenie macierzy korelacji
+cor_matrix <- cor(dane[, sapply(dane, is.numeric)])
+
+corrplot(cor_matrix, 
+         method = "color",
+         addCoef.col = "black",
+         number.cex = 0.9,
+         tl.col = "black",
+         tl.srt = 45,
+         diag = FALSE,
+         col = colorRampPalette(c("#66c2a4", "white", "#fc8d62"))(200),
+         title = "Macierz korelacji",
+         mar = c(0,0,2,0),
+         cl.lim = c(-1, 1),
+         order = "hclust")
+```
+
+------------------------------------------------------------------------
+
+### Spożycie piwa a temperatura.
+
+Rozważmy najbardziej skorelowaną zmienną z `consumption`***.*** Wybieramy `t_max` i sprawdzamy, jak maksymalna temperatura wpływa na ilość spożytego piwa.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', message=FALSE}
+ggplot(dane, aes(t_max, consumption)) +
+  geom_point(color = "#66c2a4", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "#fc8d62") +
+  labs(title = "Wpływ maksymalnej temperatury \n na spożycie piwa",
+       x = "Maksymalna temperatura (°C)",
+       y = "Spożycie piwa (litry)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+
+```
+
+------------------------------------------------------------------------
+
+Wraz ze wzrostem maksymalnej temperatury obserwujemy wyraźny wzrost spożycia piwa, co jest zgodne z oczekiwaniami wynikającymi z pozytywnego współczynnika korelacji. Świadczy to, że w ciepłe dni studenci piją więcej piwa. Chociaż punkty danych są rozproszone wokół linii regresji, ich układ wskazuje na możliwe problemy ze zgodnością z modelem liniowym.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+model_1 <- lm(consumption ~ t_max , dane)
+summary(model_1)
+```
+
+------------------------------------------------------------------------
+
+W podsumowaniu modelu regresji liniowej możemy odczytać, że zmienna t_max *istotnie* wpływa na zmienną consumption, potwierdza to bardzo niski poziom p-value \< 2.2e-16. Szacowany współczynnik dla t_med wynosi 0.6548, co oznacza z każdym stopniem wzrostu temperatury związany jest wzrost konsumpcji piwa o 0.65l.
+
+Model wyjaśnia około 41.14% zmienności zmiennej consumption (R² = 0.4114), co sugeruje, że jest istotnym, ale możliwe, że nie jedynym czynnikiem wpływającym na konsumpcje piwa.
+
+Sprawdźmy dopasowanie modelu:
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', fig.height=8, fig.width=8, warning=FALSE, dpi=300}
+par(mfrow = c(2, 2))
+plot(model_1)
+```
+
+------------------------------------------------------------------------
+
+Na pierwszy rzut oka, model jest dobrze dopasowany. Na wykresie ***Residuals vs Fitted*** wartości nie wykazują wyraźnego wzorca (np. krzywoliniowości), a czerwona linia jest całkiem dobrze dopasowana do prostej **y = 0** . Pewne rozproszenie reszt na końcach może wskazywać na niewielkie odchylenia od założeń modelu.
+
+Na wykresie ***Q-Q Residuals*** obserwujemy, że reszty w większości układają się wzdłuż linii teoretycznych kwantyli, co sugeruje, że rozkład reszt jest bliski normalnemu, jednak na końcach widoczne są ciężkie ogony, co sugeruje że w danych mogą występować wartości odstające lub reszty mają rozkład o większej skośności niż normalny. Ogony te wskazują, że model może nie w pełni wychwytywać niektóre skrajne obserwacje.
+
+Wykres ***Scale-Location*** pokazuje, że wartości standaryzowanych reszt są dość równomiernie rozproszone wokół czerwonej linii, co wskazuje na stałość wariancji *(homoskedastyczność)*. Jednak lekkie odchylenie w prawej części wykresu może sugerować pewne zróżnicowanie wariancji w zależności od wartości dopasowanych.
+
+Na wykresie ***Residuals vs Leverage*** zauważamy kilka obserwacji o wysokim wpływie (oznaczonych numerami) oraz pewne odchylenia od centralnej linii, co może wskazywać na obecność punktów odstających, które mają większy wpływ na model. Jednakże, wszystkie punkty znajdują się wewnątrz obszaru wyznaczonego przez odległość Cooka, co sugeruje, że nie ma znacznych problemów z punktami o dużej dźwigni.
+
+Można zatem stwierdzić, że ilość konsumowanego piwa zależy istotnie od temperatury maksymalnej.
+
+------------------------------------------------------------------------
+
+### Spożycie piwa a dzień tygodnia.
+
+Warto zadać pytanie, jak często oraz w jakiej ilości studenci spożywali piwo w zależności od dnia tygodnia.
+
+```{r echo=FALSE, fig.align='center'}
+ggplot(dane, aes(x = consumption, fill = factor(weekend))) +
+  geom_histogram(bins = 30, position = "identity", alpha = 0.7) +
+  labs(title = "Rozkład spożycia piwa",
+       subtitle = "Porównanie dni powszednich i weekendów",
+       x = "Spożycie piwa (litry)",
+       y = "Częstość",
+       fill = "Typ dnia")  +
+  scale_fill_manual(values = c("#66c2a4", "salmon"),
+                    labels = c("Dzień powszedni", "Weekend")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+------------------------------------------------------------------------
+
+Wykres pokazuje, że spożycie piwa w weekendy jest wyższe i bardziej rozproszone niż w dni powszednie. Najwyższe spożycie piwa w weekendy występuje w zakresie 25-30 litrów, podczas gdy w dni powszednie jest ono niższe i bardziej skoncentrowane wokół 20-25 litrów.
+
+Na pierwszy rzut oka widzimy pewną niespójność - w weekendy faktycznie studenci piją więcej piw (w litrach), lecz w dni robocze obserwujemy częstsze spożycie alkoholu. Jest to oczywiście spowodowane proporcją dni roboczych (5/7) i weekendowych (2/7).
+
+Aby lepiej zrozumieć różnice w spożyciu piwa między dniami powszednimi a weekendami, pomimo pozornej niespójności na poprzednim histogramie (gdzie częstsze spożycie w dni powszednie wynikało z różnicy w liczbie tych dni w tygodniu), poniższy wykres pudełkowy prezentuje rozkład spożycia piwa w tych dwóch kategoriach. Pozwala on na bezpośrednie porównanie median, kwartyli oraz zakresów spożycia, uwzględniając właściwą proporcję dni powszednich i weekendowych.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+ggplot(dane, aes(x = weekend, y = consumption, fill = factor(weekend))) + 
+  geom_boxplot(notch = TRUE) +
+  labs(title = "Spożycie piwa \n w poszczególnych dniach tygodnia",
+       x = "Dzień",
+       y = "Spożycie piwa (litry)",
+       fill = "Typ dnia") +
+  scale_fill_manual(values = c("#66c2a4", "salmon"),
+                    labels = c("Dzień powszedni", "Weekend")) +
+  scale_x_continuous(breaks = 0:1) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+------------------------------------------------------------------------
+
+Jak widać, zauważalne są różnice w średnim spożyciu piwa między tymi dwoma kategoriami, co sugeruje, że może istnieć istotna statystycznie różnica w wariancji spożycia piwa między dniami powszednimi a weekendami. 
+
+Dlatego przyjrzałyśmy się temu bliżej i sprawdziłyśmy jaka jest ilość spożytego piwa dla każdego dnia tygodnia.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+ggplot(dane, aes(x = wday, y = consumption, fill = factor(wday))) + 
+  geom_boxplot(notch = TRUE) + 
+  geom_hline(yintercept = mean(dane$consumption), linetype = "dashed") +
+  labs(title = "Spożycie piwa \n w poszczególnych dniach tygodnia",
+       x = "Dzień Tygodnia",
+       y = "Spożycie piwa (litry)",
+       fill = "Dzień tygodnia") +
+  scale_x_continuous(breaks = 1:7) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+------------------------------------------------------------------------
+
+Spoglądając na powyższy wykres wyraźnie widać, że spożycie piwa znacząco wzrasta w weekendy (sobota i niedziela) w porównaniu do dni roboczych. Mediana w weekendy jest znacząco wyższa, a rozkład charakteryzuje się większym rozproszeniem w porównaniu do dni powszednich. Wyższa zmienność w weekendy może być związana z większą ilością wolnego czasu oraz spotkaniami towarzyskimi. Wykres ten stanowi podstawę do dalszej analizy wariancji, która pozwoli na określenie, czy te różnice są istotne statystycznie.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+anova_model1 <- aov(consumption ~ weekend , data = dane)
+summary.lm(anova_model1)
+```
+
+------------------------------------------------------------------------
+
+**Wartość współczynnika dla weekendu** wynosi 4.9345. Oznacza to, że średnia konsumpcja piwa w weekendy jest o 4,93 litra większa niż w dni powszednie, przy założeniu, że wszystkie inne czynniki pozostają bez zmian. Czyli, gdy wspólczynnik weekedu jest równy zero, średnia konsupcja piwa grupy studentów wynosi 23,9982 litrów. Gdy a=1, czyli obserwacja to sobota/niedziela, średnia wynosi 4,93\*1+24,0 czyli w zaokrągleniu 29 litrów piwa.
+
+**Wartość p-value** dla zmiennej weekend jest bardzo niska (\< 2e-16), co wskazuje na wysoką istotność statystyczną. Oznacza to, że możemy z dużą pewnością stwierdzić, że różnica w konsumpcji między weekendem a dniami powszednimi nie jest przypadkowa.
+
+**R-squared** dla modelu wynosi 0.254, co oznacza, że zmienna “weekend” wyjaśnia około 25,4% zmienności w konsumpcji piwa. Jest to umiarkowane dopasowanie, co sugeruje, że inne czynniki mogą również wpływać na konsumpcję, ale weekend jest istotnym czynnikiem.
+
+Podsumowując, konsumpcja piwa jest znacząco wyższa w weekendy w porównaniu do dni powszednich, co zostało wykazane jako statystycznie istotne w tym modelu.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, message=FALSE}
+kolory <- c("#66c2a4", "salmon")
+
+ggplot(dane, aes(x = t_max, y = consumption, color = factor(weekend))) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  scale_color_manual(values = kolory) +
+  labs(title = "Spożycie piwa \n w zależności od temperatury i weekendu",
+       x = "Maksymalna Temperatura (°C)",
+       y = "Spożycie piwa (litry)",
+       color = "Weekend") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "right")
+```
+
+------------------------------------------------------------------------
+
+Jak widać zarówno dla dni roboczych jak i weekendu wraz ze wzrostem mediany temperatury wzrasta ilość spożytego piwa. Jednak nachylenia obu linii są zbliżone, co sugeruje, że wzrost temeperatury o 1 stopień prowadzi do *podobnego* wzrostu spożycia piwa, *niezależnie* od tego od dnia tygodnia. Równoległość tych prostych mówi nam o tym, że *nie istnieje* istotna interakcja między zmienntmi `t_med` a `weekend`.
+
+Mimo tego postanowiłyśmy dopasować model z interakcją tych zmiennych.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+model.int <- lm(consumption ~ t_max * weekend, dane) 
+summary(model.int)
+```
+
+------------------------------------------------------------------------
+
+Nasze wcześniejsze spostrzeżenia potwierdza również podsumowanie tego modelu. Interakcja pomiędzy zmienną t_max i weekend (-0.02987) jest statystycznie nieistotna. Oznacza to, że efekty temperatury i weekendu są względem siebie niezależne.
+
+A jak wygląda model liniowy, w którym zmienna consumption wyjaśniana jest przez maksymalną temperaturę i weekend?
+
+```{r}
+model_tw <- lm(consumption ~ t_max + weekend, dane)
+summary(model_tw)
+```
+
+------------------------------------------------------------------------
+
+Wyniki analizy regresji liniowej wskazują, że model z temperaturą maksymalną (t_max) i weekendem jako zmiennymi objaśniającymi wyjaśnia 69,47% zmienności w spożyciu piwa. Wartość F-statystyki wynosi 415,1, co oznacza, że model jest statystycznie istotny (p \< 2,2e-16).
+
+Porównując ten wynik z modelem, w którym jedyną zmienną objaśniającą była temperatura (F-statystyka = 255,4), można stwierdzić, że dodanie weekendu jako zmiennej objaśniającej znacznie ***poprawia dopasowanie*** modelu. Wzrost wartości F-statystyki o ponad 150% wskazuje na to, że weekend ma ***istotny*** wpływ na spożycie piwa.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', fig.height=8, fig.width=8, warning=FALSE, dpi=300}
+par(mfrow = c(2, 2))
+plot(model_tw)
+```
+
+------------------------------------------------------------------------
+
+1.  **Wykres Residuals vs Fitted**: Punkty na wykresie są rozproszone w sposób losowy, co wskazuje na to, że model jest dobrze dopasowany do danych. Nie ma widocznych trendów lub korelacji między resztami a wartościami dopasowanymi.
+
+2.  **Wykres Normal Q-Q**: Punkty są blisko linii (teoretycznych kwantyli), co wskazuje na to, że reszty są rozłożone normalnie. Jednakże, na końcach wykresu widoczne są niewielkie odchylenia od normalności.
+
+3.  **Wykres Scale-Location**: Punkty na wykresie są rozproszone w sposób losowy, co wskazuje na to, że wariancja reszt jest stała.
+
+4.  **Wykres Residuals vs Leverage**: Punkty na wykresie są rozproszone w sposób losowy, wszystkie punkty znajdują się wewnątrz obszaru wyznaczonego przez odległość Cooka, co sugeruje, że nie ma znacznych problemów z punktami o dużej dźwigni.
+
+    Podsumowujac, model jest bardzo dobrze dopasowany.
+
+------------------------------------------------------------------------
+
+### Spożycie piwa a pora roku.
+
+Chcemy również zweryfikować, czy pora roku istotnie wpływa na spożycie piwa.
+
+```{r echo=FALSE}
+# Tworzymy nową zmienną hot
+dane <- dane %>%
+  mutate(hot = ifelse(t_max > 25, 1, 0) )
+
+
+ggplot(dane, 
+       aes(x = month, 
+           y = consumption, 
+           color = factor(hot))) + 
+  geom_point(size = 2, 
+             position = position_jitter(width = 0.2, height = 0)) + 
+  geom_hline(yintercept = mean(dane$consumption), 
+             linetype = "dashed", 
+             color = "red",
+             linewidth = 1) +
+  labs(title = "Spożycie piwa w zależności od miesiąca i temperatury",
+       subtitle = "Niebieski - temperatura max ≤ 25°C,
+       Różowy - temperatura max > 25°C",
+       x = "Miesiąc", 
+       y = "Spożycie piwa (litry)") +
+  scale_x_continuous(breaks = 1:12, 
+                    labels = month.abb) +
+  scale_color_manual(values = kolory,
+                    labels = c("Chłodno", "Gorąco")) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.title = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    legend.position = "top",
+    legend.title = element_blank())
+
+```
+
+------------------------------------------------------------------------
+
+Spożycie piwa jest wyższe w miesiącach letnich (grudzień-luty) i przy temperaturach powyżej 25°C. Wykres pokazuje, że w tych warunkach spożycie piwa jest częściej w zakresie 25-35 litrów. Z kolei w miesiącach zimowych (czerwiec-sierpień) spożycie piwa jest niższe i częściej w zakresie 15-25 litrów.
+
+W związku z tym chcemy sprawdzić jak prezentuje się ilość spożytego piwa w poszczególnych miesiącach.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+ggplot(dane, aes(x = month, y = consumption, fill = factor(month))) + 
+  geom_boxplot(notch = TRUE) + 
+  labs(title = "Spożycie piwa \n w poszczególnych miesiącach roku",
+       x = "Miesiąc",
+       y = "Spożycie piwa (litry)",
+       fill = "Miesiąc") +
+  scale_x_continuous(breaks = 1:12) +
+  scale_fill_discrete(labels = c("Styczeń", "Luty", "Marzec", "Kwiecień", "Maj", "Czerwiec", "Lipiec", "Sierpień", "Wrzesień", "Październik", "Listopad", "Grudzień")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+
+```
+
+Z powyższego wykresu, wnioskujemy, że spożycie piwa jest wyższe w miesiącach wiosenno-letnich, takich jak październik czy styczeń. Można więc stwierdzić, że ilość spożytego piwa zależy od pory roku.
+
+Aby to potwierdzić sprawdzamy jak prezentują się wykresy pudełkowe zmiennej `consumption` w zależności od pory roku `season`.
+
+```{r echo=FALSE, fig.align='center'}
+dane$season_num <- ifelse(dane$season == "Lato", 1,
+                                ifelse(dane$season == "Jesień", 2,
+                                       ifelse(dane$season == "Zima", 3, 4)))
+
+ggplot(dane, aes(x = season_num, y = consumption, fill = factor(season_num))) + 
+  geom_boxplot(notch = TRUE) + 
+  labs(title = "Spożycie piwa \n w poszczególnych porach roku",
+       x = "Pora roku",
+       y = "Spożycie piwa (litry)",
+       fill = "Pora roku") +
+  scale_x_continuous(breaks = 1:4) +
+  scale_fill_discrete(labels = c("Lato", "Jesień", "Zima", "Wiosna")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+Widzimy, że spożycie piwa różni się w zależności od pory roku, co potwierdza nasze wcześniejsze obserwacje.
+
+Następnym krokiem jest przeprowadzenie testu ANOVA, aby sprawdzić, czy różnice w spożyciu piwa między porami roku są statystycznie istotne. 
+
+```{r echo=FALSE}
+anova_model2 <- aov(consumption ~ season, data = dane) 
+summary.lm(anova_model2) 
+```
+
+------------------------------------------------------------------------
+
+Wyniki testu ANOVA wskazują, że pora roku (`season`) ma statystycznie istotny wpływ na spożycie piwa, ponieważ p-wartość wynosi 5.634e-08 (p \< 0.05). Najwyższe spożycie odnotowano ***latem***, które było średnio o **3,08** litra wyższe niż jesienią. ***Wiosną*** również zaobserwowano istotnie wyższe spożycie w porównaniu do jesieni, różnica wyniosła **2,09** litra. Natomiast zimą spożycie piwa *nie różniło się istotnie* od poziomu obserwowanego w jesieni (różnica -0.11 litra).
+
+Chcemy teraz zbadać, czy istnieje związek między *temperaturą* a *ilością spożywanego piwa* w *różnych porach roku.*
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, message=FALSE}
+ggplot(dane, aes(x = t_max, y = consumption, color = factor(season))) + 
+  geom_point() + 
+  geom_smooth(method = "lm", se = FALSE) + 
+  labs(title = "Zależność między temperaturą a spożyciem piwa",
+       subtitle = "w zależności od pory roku",
+       x = "Temperatura (°C)",
+       y = "Spożycie piwa (litry)",
+       color = "Pora roku") + 
+  scale_color_manual(values = c("Lato" = "#F8766D", "Jesień" = "#7DAE00", "Zima" = "#19BFC4", "Wiosna" = "#C87CFF")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+------------------------------------------------------------------------
+
+Wiemy już, że spożycie piwa wzrasta wraz ze wzrostem temperatury, potwierdzają dodatnie nachylenia linii regresji dla każdej pory roku. Linie te są blisko siebie, co oznacza, że wpływ temperatury na spożycie piwa jest podobny wiosną, latem, jesienią i zimą, choć różni się nieznacznie.
+
+Bliskość lini regresji może sugerować, że nie ma istotnej interakcji między temperaturą a porą roku, w kontekście wpływu na spożycie piwa. Innymi słowy, wpływ temperatury na spożycie piwa wydaje się być podobny niezależnie od pory roku, co oznacza, że zmiana temperatury prowadzi do podobnego wzrostu spożycia w każdej porze roku.
+
+Aby to sprawdzić, tworzymy dwa modele regresji, jeden z *interakcją*, drugi *bez* i przeprowadzamy test porównania modeli regresji za pomocą analizy wariancji (ANOVA)
+
+------------------------------------------------------------------------
+
+```{r include=FALSE}
+model_int2 <- lm(consumption ~ t_max * season, dane)
+```
+
+```{r include=FALSE}
+model_2 <- lm(consumption ~ t_max + season, dane ) 
+```
+
+```{r echo=FALSE}
+anova(model_int2, model_2)
+```
+
+------------------------------------------------------------------------
+
+Wynik testu wskazuje, że interakcja między temperaturą (`t_max`) a porą roku (`season`) **nie jest istotna statystycznie**. Wartość p = 0.5253 jest znacznie większa niż poziom istotności (0.05). Oznacza to, że nie ma dowodów na to, iż dodanie interakcji między `t_max` a `season` znacząco poprawia dopasowanie modelu.
+
+A zatem: *wpływ temperatury na spożycie piwa jest podobny we wszystkich porach roku.*
+
+```{r echo=FALSE}
+summary(model_2)
+```
+
+------------------------------------------------------------------------
+
+Analiza modelu regresji bez interakcji wskazuje, że temperatura maksymalna ma istotny wpływ na spożycie piwa – wzrost temperatury o 1°C wiąże się ze zwiększeniem konsumpcji o 0,66899 litra. Spożycie różni się również w zależności od pory roku, przy czym wiosna ma największy wpływ, powodując zwiększenie konsumpcji o 0,86699 litra w porównaniu z innymi porami roku. Model liniowy wyjaśnia 41,39% zmienności w spożyciu piwa, co daje odrobinę lepszy wynik od modelu objaśnianego przez samą zmienną t_max (41.14%).
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', fig.height=8, fig.width=8, warning=FALSE, dpi=300}
+par(mfrow = c(2, 2) )
+plot(model_2 )
+```
+
+**Wykres Residuals vs Fitted:**\
+Model jest dobrze dopasowany, bez wyraźnego wzorca w rozproszeniu reszt. Czerwona linia jest dobrze dopasowana do prostej y = 0.
+
+**Wykres Q-Q Residuals:**\
+Reszty są w większości zgodne z rozkładem normalnym, ale ponownie widoczne są ciężkie ogony, co sugeruje, że w danych mogą występować wartości odstające lub reszty mają rozkład o większej skośności niż normalny. Ogony te wskazują, że model nie potrafi w pełni wychwytywać niektórych skrajnych obserwacji.
+
+**Wykres Scale-Location:**\
+Wartości standaryzowanych reszt są dość równomiernie rozproszone wokół czerwonej linii, co wskazuje na stałość wariancji.
+
+**Wykres Residuals vs Leverage:**\
+Kilka obserwacji o wysokim wpływie jest widocznych, co może wskazywać na obecność punktów odstających, które mają większy wpływ na model. Jednakże, wszystkie punkty znajdują się wewnątrz obszaru wyznaczonego przez odległość Cooka, co sugeruje, że nie ma znacznych problemów z punktami o dużej dźwigni.
+
+------------------------------------------------------------------------
+
+### Spożycie piwa a opady.
+
+Warto również rozważyć, jak spożycie piwa zmienia się w zależności od opadów atmosferycznych.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(dane, aes(prec, consumption)) +
+  geom_point(color = "#66c2a4", size = 2) +
+  geom_smooth(method = "lm", se = TRUE, color = "#fc8d62") +
+  labs(title = "Spożycie piwa a opady atmosferyczne",
+       x = "Opady atmosferyczne", y = "Spożycie piwa (litry)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10))
+```
+
+------------------------------------------------------------------------
+
+Z analizy wykresu przedstawiającego zależność między spożyciem piwa a opadami atmosferycznymi można wyciągnąć następujący wniosek: wraz ze wzrostem opadów atmosferycznych spożycie piwa nieznacznie maleje, co potwierdza, że istnieje słaba, negatywna korelacja między tymi zmiennymi (-0.19). Jednak z uwagi na dużą rozbieżność punktów (rozproszenie) wokół linii trendu, relacja ta wydaje się mało istotna, a spożycie piwa w znacznej mierze pozostaje niezależne od ilości opadów.
+
+A jak ta zależność prezentuje się w zależności od zmiennej `weekend`?
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, message=FALSE}
+ggplot(dane, aes(x = prec, y = consumption, color = factor(weekend))) +
+  geom_point() +
+  scale_color_manual(values = kolory) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(title = "Spożycie plastiku \n w zależności od opadów atmosferycznych i weekendu",
+       x = "Opady Atmosferyczne",
+       y = "Spożycie piwa (litry)",
+       color = "Weekend") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text = element_text(size = 10),
+        legend.position = "right")
+```
+
+------------------------------------------------------------------------
+
+Z przedstawionego wykresu wynika, że relacja między spożyciem piwa a opadami atmosferycznymi różni się w zależności od tego, czy jest weekend, czy dzień powszedni.
+
+-   W dni powszednie (linia turkusowa) spożycie piwa jest generalnie niższe, a wraz ze wzrostem opadów widać niewielką tendencją spadkową.
+
+-   W weekendy (linia czerwona) spożycie piwa jest wyższe niezależnie od poziomu opadów, a wpływ opadów na spożycie również jest spadkowy, choć nieco bardziej wyraźny niż w w dni powszednie.
+
+Różnica w spożyciu między weekendami a dniami powszednimi pozostaje widoczna, nawet przy wyższych opadach. Sugeruje to, że czynniki związane z charakterem dnia (np. więcej czasu wolnego w weekendy) mają większy wpływ na konsumpcję piwa niż same warunki pogodowe.
+
+Mimo to spróbujmy utworzyć model liniowy, który opisuje zależność między spożyciem piwa a zmiennymi `t_max`, `weekend`, `prec`.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE}
+model_3 <- lm(consumption ~ t_max + prec + weekend, dane)
+summary(model_3)
+```
+
+------------------------------------------------------------------------
+
+Analiza regresji liniowej wykazuje, że temperatura maksymalna (t_max), opady (prec) i weekend są istotnymi predyktorami spożycia piwa. Niska wartość p-value wskazuje na odrzucenie hipotezy zerowej, zatem możemy wnioskować, że istnieje istotna zależność między zmiennymi objaśniającymi a odpowiedzią.
+
+Wyniki pokazują, że:
+
+-   Temperatura maksymalna ma pozytywny wpływ na spożycie piwa, co oznacza, że wzrost temperatury o 1 stopień powoduje wzrost spożycia o 0,67 litra.
+
+-   Opady mają negatywny wpływ na spożycie piwa, co oznacza, że wzrost opadów o 1 mm powoduje spadek spożycia o 0,06 litra.
+
+-   Weekend ma pozytywny wpływ na spożycie piwa, co oznacza, że spożycie w weekendy jest o 5,18 litra wyższe niż w dni powszednie.
+
+-   Współczynnik R² wskazuje, że model wyjaśnia około 72% zmienności w wynikach.
+
+Przyjrzyjmy się wykresom diagnostycznym.
+
+------------------------------------------------------------------------
+
+```{r echo=FALSE, fig.align='center', fig.height=8, fig.width=8, warning=FALSE, dpi=300}
+par(mfrow = c(2, 2))
+plot(model_3)
+```
+
+------------------------------------------------------------------------
+
+Widzimy, że model jest calkiem dobrze dopasowany.
+
+Na wykresie ***Residuals vs Fitted*** wartości nie wykazują wyraźnego wzorca, a czerwona linia jest całkiem dobrze dopasowana do prostej **y = 0** .
+
+Na wykresie ***Q-Q Residuals*** obserwujemy, że reszty w nie układają się dokładnie wzdłuż linii teoretycznych kwantyli, co może wskazywać, że nie są one rozłożone normalnie.
+
+Wykres ***Scale-Location*** nie wskazuje na problem heteroskedastyczności. Pozioma linia jest w przybliżeniu poziona, wówczas spełnione jest założenie o stałej wariancji.
+
+Na wykresie ***Residuals vs Leverage*** nie zauważamy wpływowych (poza liniami Cook's distance), jednak widoczne są punkty o dużej dźwigni (oznaczone: 360, 18, 288)
+
+# Podsumowanie
+
+Projekt analizy spożycia piwa rozpoczął się od postawienia celu, jakim było zbadanie czynników wpływających na dzienne spożycie piwa. W ramach analizy eksploracyjnej zbadano wpływ różnych zmiennych na konsumpcję piwa, ze szczególnym uwzględnieniem temperatury maksymalnej, opadów i efektu weekendowego.
+
+Analiza wykazała, że spożycie piwa jest wyższe w miesiącach letnich, oraz znacząco wzrasta w weekendy. W toku badania stworzono kilka modeli regresji liniowej o rosnącej złożoności.
+
+-   Pierwszy model, uwzględniający tylko efekt temperatury maksymalnej, wyjaśniał 41,14% zmienności w spożyciu piwa i pokazał, że temperatura maksymalna ma istotny wpływ na spożycie piwa.
+
+-   Drugi model, uwzględniający tylko efekt weekendu, wyjaśniał 25,4% zmienności w spożyciu piwa i pokazał, że w weekendy spożycie wzrasta średnio o 4,93 litra.
+
+-   Trzeci model, który uwzględniał temperaturę maksymalną i weekend, wyjaśniał 69,47% zmienności w spożyciu piwa. Model ten wykazał, że wzrost temperatury o 1°C zwiększa spożycie o 0,68 litra, a weekend zwiększa spożycie o 5,18 litra.
+
+-   Czwarty model, który uwzględniał temperaturę maksymalną i porę roku, wyjaśniał 41,39% zmienności w spożyciu piwa. Wyniki testu ANOVA potwierdziły, że pora roku ma statystycznie istotny wpływ na spożycie piwa, przy czym najwyższe spożycie odnotowano latem (o 3,08 litra wyższe niż jesienią) i wiosną (o 2,09 litra wyższe niż jesienią).
+
+-   Piąty model, który uwzględniał temperaturę maksymalną, opady i efekt weekendu, okazał się najlepszy, wyjaśniając 72,03% zmienności w spożyciu piwa. Model ten wykazał, że wzrost temperatury o 1°C zwiększa spożycie o 0,67 litra, opady mają niewielki negatywny wpływ (-0,06 litra na jednostkę), a weekend zwiększa spożycie o 5,18 litra.
+
+Na podstawie uzyskanych wyników można stwierdzić, że temperatura maksymalna jest kluczowym czynnikiem wpływającym na spożycie piwa, a model uwzględniający dodatkowo opady i efekt weekendu najlepiej przewiduje dzienne spożycie.
